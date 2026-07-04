@@ -11,6 +11,12 @@ alter table public.users
 add column if not exists role text not null default 'staff',
 add column if not exists email text;
 
+-- public.users.bar_id used to be an operational bar link. In the current model,
+-- operational access belongs in public.bar_memberships, so super users may have
+-- no bar_id here.
+alter table public.users
+alter column bar_id drop not null;
+
 alter table public.bar_memberships
 add column if not exists role text not null default 'staff',
 add column if not exists created_at timestamptz not null default now();

@@ -178,6 +178,12 @@ async function ensurePublicUser(
   admin: NonNullable<ReturnType<typeof adminClient>>,
   user: User,
 ) {
+  const displayName =
+    typeof user.user_metadata?.full_name === "string" &&
+    user.user_metadata.full_name.trim()
+      ? user.user_metadata.full_name.trim()
+      : user.email?.split("@")[0] || "Zentra User";
+
   const { data: existing } = await admin
     .from("users")
     .select("id")
@@ -188,13 +194,14 @@ async function ensurePublicUser(
   if (existing) {
     await admin
       .from("users")
-      .update({ email: user.email ?? null })
+      .update({ email: user.email ?? null, name: displayName })
       .eq("id", user.id);
     return "";
   }
 
   const { error } = await admin.from("users").insert({
     id: user.id,
+    name: displayName,
     email: user.email ?? null,
     role: "staff",
   });

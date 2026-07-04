@@ -376,8 +376,8 @@ async function getGlobalRole(userId: string, email?: string) {
     .limit(1)
     .maybeSingle<AppUserRow>();
 
-  if (appUser?.role) {
-    return { role: normalizeRole(appUser.role), error: "" };
+  if (appUser?.role && isSuperUser(appUser.role)) {
+    return { role: "super_user", error: "" };
   }
 
   if (email) {
@@ -388,8 +388,8 @@ async function getGlobalRole(userId: string, email?: string) {
       .limit(1)
       .maybeSingle<AppUserRow>();
 
-    if (appUserByEmail?.role) {
-      return { role: normalizeRole(appUserByEmail.role), error: "" };
+    if (appUserByEmail?.role && isSuperUser(appUserByEmail.role)) {
+      return { role: "super_user", error: "" };
     }
   }
 
