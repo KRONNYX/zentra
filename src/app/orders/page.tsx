@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useBarContext } from "@/hooks/useBarContext";
 import { signOut } from "@/services/authService";
 import { formatKes } from "@/services/dashboardService";
-import { getOrderMenu, orderReference, submitOrder, type MenuItem, type OrderDraft } from "@/services/orderService";
+import { getOrderItems, getOrderMenu, orderReference, orderTotal, submitOrder, type MenuItem, type OrderDraft } from "@/services/orderService";
 
 function readPending(key: string): OrderDraft | null {
   try {
@@ -41,7 +41,7 @@ function OrderForm({ barId, storageKey }: { barId: string; storageKey: string })
   const [reloadKey, setReloadKey] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [sent, setSent] = useState("");
+  const [sent, setSent] = useState<{ reference: string; total: number | null } | null>(null);
   const submitLock = useRef(false);
 
   useEffect(() => {
@@ -72,7 +72,7 @@ function OrderForm({ barId, storageKey }: { barId: string; storageKey: string })
   );
 
   function changeQuantity(id: string, change: number) {
-    setSent("");
+    setSent(null);
     setQuantities((previous) => ({
       ...previous,
       [id]: Math.min(99, Math.max(0, (previous[id] ?? 0) + change)),
@@ -86,7 +86,7 @@ function OrderForm({ barId, storageKey }: { barId: string; storageKey: string })
     submitLock.current = true;
     setSending(true);
     setError("");
-    setSent("");
+    setSent(null);
 
     try {
       const draft = pending ?? {
@@ -114,7 +114,10 @@ function OrderForm({ barId, storageKey }: { barId: string; storageKey: string })
         setQuantities({});
         setNote("");
         setSearch("");
-        setSent(orderReference(data));
+        setSent({ reference: orderReference(data), total: null });
+        setReloadKey((key) => key + 1);
+        const saved = await getOrderItems(data).catch(() => null);
+        if (saved?.data) setSent({ reference: orderReference(data), total: orderTotal(saved.data.items) });
       }
     } catch {
       setError("Order not confirmed. Check your connection and retry.");
@@ -128,7 +131,8 @@ function OrderForm({ barId, storageKey }: { barId: string; storageKey: string })
     <form onSubmit={send} className="space-y-4">
       {sent && (
         <p role="status" className="rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
-          Order #{sent} sent to the bar dashboard.
+          Order #{sent.reference} sent to the bar dashboard.
+          {sent.total !== null && ` Total ${formatKes(sent.total)}.`}
         </p>
       )}
       {pending && (

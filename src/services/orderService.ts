@@ -34,6 +34,14 @@ export function orderReference(id: string) {
   return id.slice(0, 8).toUpperCase();
 }
 
+export function orderTotal(items: Pick<OrderItem, "unit_price" | "quantity">[]) {
+  return items.reduce((sum, item) => sum + item.unit_price * item.quantity, 0);
+}
+
+export async function getOrderItems(orderId: string) {
+  return supabase.from("bar_orders").select("items").eq("id", orderId).maybeSingle<Pick<BarOrder, "items">>();
+}
+
 export async function getOrderMenu(barId: string) {
   const { data, error } = await supabase.rpc("get_order_menu", { p_bar_id: barId });
   return { data: (data ?? null) as MenuItem[] | null, error };

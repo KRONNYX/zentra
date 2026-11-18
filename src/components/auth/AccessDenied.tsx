@@ -4,9 +4,13 @@ import { ShieldAlert } from "lucide-react";
 export default function AccessDenied({
   title = "Access restricted",
   message = "You do not have permission to view this area. Contact your administrator if you believe this is incorrect.",
+  href = "/dashboard",
+  linkLabel = "Back to Home",
 }: {
   title?: string;
   message?: string;
+  href?: string;
+  linkLabel?: string;
 }) {
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-xl items-center px-4 py-10">
@@ -17,10 +21,10 @@ export default function AccessDenied({
         <h1 className="mt-4 text-xl font-bold text-slate-950">{title}</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">{message}</p>
         <Link
-          href="/dashboard"
+          href={href}
           className="mt-5 inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          Back to Home
+          {linkLabel}
         </Link>
       </div>
     </div>

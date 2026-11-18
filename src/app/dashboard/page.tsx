@@ -259,7 +259,11 @@ export default function Dashboard() {
   if (!barContext || !hasPermission(barContext.role, "view_home")) {
     return (
       <AppShell>
-        <AccessDenied message="Your permissions are not configured for the Home dashboard yet." />
+        <AccessDenied
+          message="Your permissions are not configured for the Home dashboard yet."
+          href="/orders"
+          linkLabel="Go to orders"
+        />
       </AppShell>
     );
   }

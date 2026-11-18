@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatKes } from "@/services/dashboardService";
-import { advanceOrder, listOpenOrders, OPEN_ORDER_LIMIT, orderReference, type BarOrder } from "@/services/orderService";
+import { advanceOrder, listOpenOrders, OPEN_ORDER_LIMIT, orderReference, orderTotal, type BarOrder } from "@/services/orderService";
 
 export default function LiveOrdersPanel({ barId }: { barId: string }) {
   const [orders, setOrders] = useState<BarOrder[] | null>(null);
@@ -136,7 +136,7 @@ export default function LiveOrdersPanel({ barId }: { barId: string }) {
                   <li key={item.product_id} className="break-words">{item.quantity} × {item.name}{item.unit ? ` (${item.unit})` : ""}</li>
                 ))}
               </ul>
-              <p className="text-sm text-slate-600">Order total: {formatKes(order.items.reduce((sum, item) => sum + item.unit_price * item.quantity, 0))}</p>
+              <p className="text-sm text-slate-600">Order total: {formatKes(orderTotal(order.items))}</p>
               <button type="button" disabled={Boolean(saving) || stale}
                 onClick={() => updateStatus(order, order.status === "new" ? "ready" : "served")}
                 className="min-h-11 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-50">
