@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatKes } from "@/services/dashboardService";
-import { advanceOrder, listOpenOrders, orderReference, type BarOrder } from "@/services/orderService";
+import { advanceOrder, listOpenOrders, OPEN_ORDER_LIMIT, orderReference, type BarOrder } from "@/services/orderService";
 
 export default function LiveOrdersPanel({ barId }: { barId: string }) {
   const [orders, setOrders] = useState<BarOrder[] | null>(null);
@@ -100,7 +100,7 @@ export default function LiveOrdersPanel({ barId }: { barId: string }) {
             {stale ? "Updates interrupted"
               : live ? "Live updates"
               : "Checking every 10 seconds"}
-            {orders && !stale ? ` · ${orders.length === 100 ? "100+" : orders.length} open` : ""}
+            {orders && !stale ? ` · ${orders.length >= OPEN_ORDER_LIMIT ? `${OPEN_ORDER_LIMIT}+` : orders.length} open` : ""}
           </p>
         </div>
         <Link href="/orders" className="inline-flex min-h-11 items-center rounded-xl border border-slate-300 px-4 text-sm font-semibold">

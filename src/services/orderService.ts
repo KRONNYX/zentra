@@ -51,16 +51,19 @@ export async function submitOrder(barId: string, draft: OrderDraft) {
   return { data: typeof data === "string" ? data : null, error };
 }
 
+export const OPEN_ORDER_LIMIT = 300;
+
 export async function listOpenOrders(barId: string) {
-  return supabase
+  const result = await supabase
     .from("bar_orders")
     .select("id, created_at, note, status, items")
     .eq("bar_id", barId)
     .in("status", ["new", "ready"])
-    .order("created_at")
-    .order("id")
-    .limit(100)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(OPEN_ORDER_LIMIT)
     .returns<BarOrder[]>();
+  return { ...result, data: result.data ? [...result.data].reverse() : null };
 }
 
 export async function advanceOrder(barId: string, orderId: string, status: "ready" | "served") {
