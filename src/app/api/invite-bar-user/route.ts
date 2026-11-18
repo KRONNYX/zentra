@@ -143,6 +143,7 @@ async function ensureAuthUser(
   admin: NonNullable<ReturnType<typeof adminClient>>,
   email: string,
   fullName: string,
+  redirectTo: string,
 ) {
   const existing = await findAuthUserByEmail(admin, email);
 
@@ -155,7 +156,7 @@ async function ensureAuthUser(
   }
 
   const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-    redirectTo: process.env.ZENTRA_INVITE_REDIRECT_URL,
+    redirectTo,
     data: {
       full_name: fullName || email.split("@")[0],
       invited_to: "Zentra",
@@ -353,7 +354,12 @@ export async function POST(request: NextRequest) {
     return jsonError("Only owners and super users can invite login users.", 403);
   }
 
-  const invited = await ensureAuthUser(admin, email, input.fullName?.trim() ?? "");
+  const invited = await ensureAuthUser(
+    admin,
+    email,
+    input.fullName?.trim() ?? "",
+    process.env.ZENTRA_INVITE_REDIRECT_URL || new URL("/accept-invite", request.nextUrl.origin).toString(),
+  );
 
   if (!invited.user) {
     return jsonError(invited.error || "Supabase Auth invite failed.", 500);

@@ -5,7 +5,7 @@ Waiters sign in on their phone and send orders from `/orders`. Owners and manage
 ## Setup (staging first)
 
 1. In the Supabase SQL editor, run `supabase/bar-orders-pilot.sql` after the existing scripts (`rls-multitenancy.sql`, `role-permissions-rls.sql`, `rpc-atomic-workflows.sql`, `membership-invites-and-bar-switching.sql`). It is safe to re-run.
-2. Set `ZENTRA_INVITE_REDIRECT_URL` to `https://<your-domain>/accept-invite` in Vercel and add that URL to Supabase Auth → URL configuration → Redirect URLs.
+2. Add `https://<your-domain>/accept-invite` to Supabase Auth → URL configuration → Redirect URLs. Invites send people to the site's own `/accept-invite` page; set `ZENTRA_INVITE_REDIRECT_URL` in Vercel only to override that.
 3. Invite each waiter from Staff as a login user with the `staff` role. They open the email link, set a password (12+ characters) and land on `/orders`. Their phone keeps them signed in.
 
 ## Behaviour
