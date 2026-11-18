@@ -491,6 +491,10 @@ export async function getDashboardData(
     };
   }
 
+  return getDashboardDataForBar(barContext, period);
+}
+
+export async function getDashboardDataForBar(barContext: BarContext, period: DatePeriod) {
   const { settings, error: settingsError } = await getCloseDaySettings(
     barContext.barId,
   );

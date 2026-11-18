@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { signInWithPassword } from "@/services/authService";
+import { useEffect, useState } from "react";
+import { getCurrentUser, getSignedInPath, signInWithPassword } from "@/services/authService";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
@@ -10,22 +10,42 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function resumeSession() {
+      try {
+        const { user } = await getCurrentUser();
+        if (!user || !active) return;
+        const path = await getSignedInPath(user);
+        if (active) router.replace(path);
+      } finally {
+        if (active) setCheckingSession(false);
+      }
+    }
+    void resumeSession().catch(() => {});
+    return () => { active = false; };
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
-    const { error } = await signInWithPassword(email, password);
-
-    if (error) {
-      setError(error.message);
+    try {
+      const { user, error } = await signInWithPassword(email.trim(), password);
+      if (!user || error) {
+        setError("Could not sign in. Check your email and password and try again.");
+        return;
+      }
+      router.replace(await getSignedInPath(user));
+    } catch {
+      setError("Could not connect. Check your connection and try again.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.push("/dashboard");
   };
 
   return (
@@ -36,32 +56,39 @@ export default function LoginPage() {
       >
         <h1 className="mb-6 text-2xl font-bold">Zentra Login</h1>
 
+        <label htmlFor="email" className="mb-1 block text-sm font-medium">Email</label>
         <input
+          id="email"
           type="email"
-          placeholder="Email"
+          autoComplete="username"
+          autoCapitalize="none"
+          required
           className="mb-4 w-full rounded border p-3"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
 
+        <label htmlFor="password" className="mb-1 block text-sm font-medium">Password</label>
         <input
+          id="password"
           type="password"
-          placeholder="Password"
+          autoComplete="current-password"
+          required
           className="mb-4 w-full rounded border p-3"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
 
         {error && (
-          <p className="mb-3 text-sm text-red-500">{error}</p>
+          <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>
         )}
 
         <button
           type="submit"
           className="w-full rounded bg-black p-3 text-white"
-          disabled={loading}
+          disabled={loading || checkingSession}
         >
-          {loading ? "Logging in..." : "Login"}
+          {checkingSession ? "Checking sign-in…" : loading ? "Signing in…" : "Sign in"}
         </button>
       </form>
     </div>

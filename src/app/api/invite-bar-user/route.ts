@@ -155,6 +155,7 @@ async function ensureAuthUser(
   }
 
   const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: process.env.ZENTRA_INVITE_REDIRECT_URL,
     data: {
       full_name: fullName || email.split("@")[0],
       invited_to: "Zentra",
