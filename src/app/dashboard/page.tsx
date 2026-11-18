@@ -20,6 +20,7 @@ import { calculateBusinessHealth } from "@/components/dashboard/BusinessHealthSc
 import MetricCard from "@/components/dashboard/MetricCard";
 import NeedsAttentionPanel from "@/components/dashboard/NeedsAttentionPanel";
 import OpenBillsCard from "@/components/dashboard/OpenBillsCard";
+import LiveOrdersPanel from "@/components/dashboard/LiveOrdersPanel";
 import PeriodToggle from "@/components/dashboard/PeriodToggle";
 import QuickActionsPanel from "@/components/dashboard/QuickActionsPanel";
 import TopProductsPanel from "@/components/dashboard/TopProductsPanel";
@@ -27,19 +28,18 @@ import AccountMenu from "@/components/layout/AccountMenu";
 import AppShell from "@/components/layout/AppShell";
 import CloseDayModal from "@/components/modals/CloseDayModal";
 import UpdateInventoryModal from "@/components/modals/UpdateInventoryModal";
-import { useAuth } from "@/hooks/useAuth";
+import { useBarContext } from "@/hooks/useBarContext";
 import { hasPermission } from "@/lib/permissions";
 import { signOut } from "@/services/authService";
 import {
   type Alert,
-  type BarContext,
   type DailyMetrics,
   type DatePeriod,
   type MetricTrend,
   type ProductSale,
   emptyMetrics,
   formatKes,
-  getDashboardData,
+  getDashboardDataForBar,
   periodLabel,
   periodTitle,
 } from "@/services/dashboardService";
@@ -164,8 +164,7 @@ function buildActivity(metrics: DailyMetrics, period: DatePeriod): ActivityItem[
 }
 
 export default function Dashboard() {
-  const { loading, user } = useAuth();
-  const [barContext, setBarContext] = useState<BarContext | null>(null);
+  const { loading, user, barContext } = useBarContext();
   const [period, setPeriod] = useState<DatePeriod>("day");
   const [metrics, setMetrics] = useState<DailyMetrics>(emptyMetrics);
   const [settings, setSettings] = useState<CloseDaySettings>(
@@ -202,19 +201,17 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (loading || !user) {
+    if (loading || !user || !barContext || !hasPermission(barContext.role, "view_home")) {
       return;
     }
 
+    let active = true;
     const loadDashboard = async () => {
       setDataLoading(true);
       setError("");
 
-      const { data, error: dashboardError } = await getDashboardData(
-        user.id,
-        user.email,
-        period,
-      );
+      const { data, error: dashboardError } = await getDashboardDataForBar(barContext, period);
+      if (!active) return;
 
       if (!data) {
         setError(dashboardError);
@@ -222,7 +219,6 @@ export default function Dashboard() {
         return;
       }
 
-      setBarContext(data.barContext);
       setSettings(data.settings);
       setMetrics(data.metrics);
       setTopProducts(data.topProducts);
@@ -232,10 +228,16 @@ export default function Dashboard() {
       setDataLoading(false);
     };
 
-    loadDashboard();
-  }, [loading, period, refreshKey, user]);
+    void loadDashboard().catch(() => {
+      if (active) {
+        setError("Couldn’t load sales reporting. The order queue is separate.");
+        setDataLoading(false);
+      }
+    });
+    return () => { active = false; };
+  }, [barContext, loading, period, refreshKey, user]);
 
-  if (loading || dataLoading) {
+  if (loading || !user) {
     return (
       <AppShell>
         <div className="mx-auto max-w-7xl space-y-5 px-4 py-5 sm:px-6 lg:px-8">
@@ -254,10 +256,14 @@ export default function Dashboard() {
     );
   }
 
-  if (!hasPermission(barContext?.role, "view_home")) {
+  if (!barContext || !hasPermission(barContext.role, "view_home")) {
     return (
       <AppShell>
-        <AccessDenied message="Your permissions are not configured for the Home dashboard yet." />
+        <AccessDenied
+          message="Your permissions are not configured for the Home dashboard yet."
+          href="/orders"
+          linkLabel="Go to orders"
+        />
       </AppShell>
     );
   }
@@ -290,12 +296,16 @@ export default function Dashboard() {
           </div>
         </header>
 
+        <LiveOrdersPanel key={barContext.barId} barId={barContext.barId} />
+
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
             {error}
           </div>
         )}
 
+        {dataLoading && <p role="status" className="text-sm text-slate-600">Loading sales reporting…</p>}
+        <div className="space-y-6" hidden={dataLoading || Boolean(error)}>
         <BusinessBriefingPanel
           greeting={getGreeting()}
           barName={barContext?.barName ?? "Zentra"}
@@ -365,6 +375,7 @@ export default function Dashboard() {
         </section>
 
         <ActivityTimeline items={activity} />
+        </div>
 
         <QuickActionsPanel
           canCloseDay={canCloseDay}
