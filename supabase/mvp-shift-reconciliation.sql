@@ -442,6 +442,10 @@ declare
   v_variance_qty numeric(12,2);
   v_rev numeric(12,2);
   v_prof numeric(12,2);
+  v_last_closed date;
+  v_window_start date;
+  v_net_after numeric(12,2);
+  v_missing_count int;
 begin
   if not public.has_bar_role(p_bar_id, array['owner', 'manager']) then
     raise exception 'Unauthorized: Only a Manager or Owner can close the business day.';
@@ -459,6 +463,28 @@ begin
 
   if public.is_business_day_closed(p_bar_id, p_business_date) then
     raise exception 'Business date % is already closed.', p_business_date;
+  end if;
+
+  select max(business_date) into v_last_closed
+  from public.daily_closures
+  where bar_id = p_bar_id and status = 'closed';
+
+  if v_last_closed is not null and p_business_date < v_last_closed then
+    raise exception 'Days must be closed in order: % is already closed.', v_last_closed;
+  end if;
+
+  select count(*) into v_missing_count
+  from public.products p
+  where p.bar_id = p_bar_id and p.is_active = true
+    and not exists (
+      select 1 from jsonb_array_elements(coalesce(p_blind_counts, '[]'::jsonb)) c
+      where (c->>'product_id')::uuid = p.id
+        and nullif(c->>'actual_closing_stock', '') is not null
+        and (c->>'actual_closing_stock')::numeric >= 0
+    );
+
+  if v_missing_count > 0 then
+    raise exception 'Count every active product before closing (% missing). Refresh the count sheet and try again.', v_missing_count;
   end if;
 
   select coalesce(sum(cash_amount), 0), coalesce(sum(mpesa_amount), 0)
@@ -496,7 +522,10 @@ begin
       end if;
     end loop;
 
-    select closing_stock into v_opening_qty
+    v_opening_qty := null;
+    v_window_start := null;
+
+    select dci.closing_stock, dc.business_date into v_opening_qty, v_window_start
     from public.daily_closure_items dci
     join public.daily_closures dc on dc.id = dci.closure_id
     where dc.bar_id = p_bar_id
@@ -506,16 +535,24 @@ begin
     order by dc.business_date desc
     limit 1;
 
+    -- Movements since this product's last count (covers skipped days), up to
+    -- and including the day being closed.
     select
-      coalesce(sum(case when movement_type = 'restock' then quantity_change else 0 end), 0),
+      coalesce(sum(case when movement_type <> 'sale' and quantity_change > 0 then quantity_change else 0 end), 0),
       coalesce(sum(case when movement_type = 'sale' then abs(quantity_change) else 0 end), 0),
-      coalesce(sum(case when movement_type = 'wastage' then abs(quantity_change) else 0 end), 0)
+      coalesce(sum(case when movement_type <> 'sale' and quantity_change < 0 then abs(quantity_change) else 0 end), 0)
     into v_restock_qty, v_sold_qty, v_wastage_qty
     from public.inventory_movements
-    where bar_id = p_bar_id and product_id = v_prod_id and business_date = p_business_date;
+    where bar_id = p_bar_id and product_id = v_prod_id
+      and (v_window_start is null or business_date > v_window_start)
+      and business_date <= p_business_date;
+
+    select coalesce(sum(quantity_change), 0) into v_net_after
+    from public.inventory_movements
+    where bar_id = p_bar_id and product_id = v_prod_id and business_date > p_business_date;
 
     if v_opening_qty is null then
-      v_opening_qty := v_prod_sys_stock - v_restock_qty + v_sold_qty + v_wastage_qty;
+      v_opening_qty := v_prod_sys_stock - v_net_after - v_restock_qty + v_sold_qty + v_wastage_qty;
     end if;
 
     v_expected_close := v_opening_qty + v_restock_qty - v_sold_qty - v_wastage_qty;
@@ -538,8 +575,10 @@ begin
       v_prod_selling, v_prod_cost, v_rev, v_prof
     );
 
+    -- Apply the variance rather than overwrite, so movements dated after the
+    -- closed day are kept.
     update public.products
-    set current_stock = v_actual_close, updated_at = now()
+    set current_stock = coalesce(current_stock, 0) + v_variance_qty, updated_at = now()
     where id = v_prod_id;
   end loop;
 
@@ -564,6 +603,100 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Stock changes from the product editor are recorded as movements so Close
+-- Day expects them instead of reporting them as surplus or shortage.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.set_product_stock(
+  p_bar_id uuid,
+  p_product_id uuid,
+  p_new_stock numeric,
+  p_notes text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_date date := public.current_business_date(p_bar_id);
+  v_current numeric;
+  v_name text;
+  v_delta numeric;
+begin
+  if not public.has_bar_role(p_bar_id, array['owner', 'manager']) then
+    raise exception 'Unauthorized: Only a Manager or Owner can change stock.';
+  end if;
+
+  if p_new_stock is null or p_new_stock < 0 then
+    raise exception 'Stock cannot be negative.';
+  end if;
+
+  perform public.lock_business_day(p_bar_id, v_business_date);
+
+  if public.is_business_day_closed(p_bar_id, v_business_date) then
+    raise exception 'ERR_PERIOD_LOCKED: Business date % is already closed.', v_business_date;
+  end if;
+
+  select coalesce(current_stock, 0), name into v_current, v_name
+  from public.products
+  where id = p_product_id and bar_id = p_bar_id
+  for update;
+
+  if not found then
+    raise exception 'Product not found for this bar.';
+  end if;
+
+  v_delta := p_new_stock - v_current;
+  if v_delta = 0 then
+    return;
+  end if;
+
+  insert into public.inventory_movements (
+    bar_id, product_id, product_name, quantity, quantity_change, movement_type, business_date, notes, created_by
+  ) values (
+    p_bar_id, p_product_id, v_name, abs(v_delta), v_delta,
+    case when v_delta > 0 then 'restock' else 'adjustment' end,
+    v_business_date, nullif(trim(coalesce(p_notes, '')), ''), auth.uid()
+  );
+
+  update public.products
+  set current_stock = p_new_stock, updated_at = now()
+  where id = p_product_id;
+end;
+$$;
+
+-- Changing the cutoff mid-shift would move the current business date and
+-- split one night's sales across two days, so require the day to be closed.
+create or replace function public.guard_business_day_cutoff()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.business_day_cutoff is distinct from old.business_day_cutoff and exists (
+    select 1 from public.sales s
+    where s.bar_id = new.id
+      and s.sale_date > coalesce(
+        (select max(business_date) from public.daily_closures where bar_id = new.id and status = 'closed'),
+        '-infinity'::date
+      )
+  ) then
+    raise exception 'Close the current business day before changing when the business day ends.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bars_guard_business_day_cutoff on public.bars;
+create trigger bars_guard_business_day_cutoff
+  before update of business_day_cutoff on public.bars
+  for each row execute function public.guard_business_day_cutoff();
+
+revoke all on function public.set_product_stock(uuid, uuid, numeric, text) from public, anon;
+grant execute on function public.set_product_stock(uuid, uuid, numeric, text) to authenticated;
 revoke all on function public.record_pos_sale(uuid, jsonb, numeric, numeric, text, text, boolean, text, text) from public, anon;
 revoke all on function public.settle_customer_tab(uuid, uuid, text, text) from public, anon;
 revoke all on function public.close_business_day(uuid, date, numeric, numeric, numeric, jsonb, text) from public, anon;
