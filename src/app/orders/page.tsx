@@ -38,7 +38,8 @@ interface ProductItem {
 
 export default function PosOrdersPage() {
   // NEW
-  const { barContext, user } = useBarContext();
+  // At the top of OrdersPage():
+  const { barContext, loading: authLoading, error: barError, user } = useBarContext();
   const activeBar = barContext
   ? { id: barContext.barId, name: barContext.barName }
   : null;
@@ -95,8 +96,13 @@ export default function PosOrdersPage() {
   };
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!activeBar?.id) {
+      setLoading(false);
+      return;
+    }
     loadData();
-  }, [activeBar?.id]);
+  }, [authLoading, activeBar?.id]);
 
   const categories = useMemo(() => {
     const cats = new Set(products.map((p) => p.category).filter(Boolean));
@@ -340,12 +346,27 @@ export default function PosOrdersPage() {
           </>
         )}
       </div>
-
+      
+      
       {/* MAIN CONTENT: DRINK GRID OR OPEN TABS */}
       <div className="p-4">
-        {loading ? (
-          <div className="text-center py-12 text-sm text-zinc-400">Loading counter...</div>
-        ) : activeView === 'pos' ? (
+        {authLoading || loading ? (
+        <div className="p-8 text-center text-zinc-400 text-sm">Loading counter...</div>
+      ) : !user ? (
+        <div className="p-8 text-center space-y-3">
+          <p className="text-sm text-zinc-400">You need to sign in to access the POS counter.</p>
+          <a
+            href="/login"
+            className="inline-block px-4 py-2 rounded-xl bg-emerald-500 text-zinc-950 font-bold text-sm"
+          >
+            Go to Login
+          </a>
+        </div>
+      ) : !activeBar ? (
+        <div className="p-8 text-center text-sm text-rose-400">
+          {barError || 'No active bar linked to your account yet.'}
+        </div>
+      ) : activeView === 'pos' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {filteredProducts.map((product) => {
               const inCart = cart.find((c) => c.product_id === product.id);
