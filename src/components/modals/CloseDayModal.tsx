@@ -1,657 +1,526 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
-import { closeBusinessDay } from "@/services/dailyClosureService";
+import React, { useEffect, useMemo, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
-  getUnpaidBillsForBar,
-  type BillSettlement,
-  type PaymentMethod,
-  type UnpaidBill,
-} from "@/services/billingService";
-import {
-  type CloseDaySettings,
-  defaultCloseDaySettings,
-  getCloseDaySettings,
-} from "@/services/settingsService";
-import {
-  getActiveStaffForBar,
-  type StaffMember,
-} from "@/services/barStaffService";
-import { formatKes } from "@/services/dashboardService";
-import type { CustomerCredit, ExpenseEntry } from "@/types/dailyClosure";
-import {
-  Banknote,
-  CalendarDays,
-  FileImage,
-  FileText,
-  Plus,
-  ReceiptText,
-  Smartphone,
-  Trash2,
-  UserRound,
   X,
-} from "lucide-react";
+  Lock,
+  AlertTriangle,
+  CheckCircle2,
+  Search,
+  ClipboardCheck,
+  Banknote,
+  ArrowRight,
+  ArrowLeft,
+} from 'lucide-react';
+import { useBarContext } from '@/hooks/useBarContext';
+import { dailyClosureService } from '@/services/dailyClosureService';
+import { BlindProductCountRow, DailyClosureReport } from '@/types/dailyClosure';
+import { Button } from '@/components/ui/button';
 
 interface CloseDayModalProps {
   isOpen: boolean;
-  barId: string;
-  role?: string | null;
   onClose: () => void;
-  onSuccess?: () => void;
+  businessDate?: string;
+  onDayClosed?: (report: DailyClosureReport) => void;
 }
 
-const emptyCredit: CustomerCredit = {
-  customerName: "",
-  staffName: "",
-  staffId: "",
-  amount: 0,
-  notes: "",
-};
-
-const emptyExpense: ExpenseEntry = {
-  expenseType: "",
-  description: "",
-  amount: 0,
-};
-
-export default function CloseDayModal({
+export function CloseDayModal({
   isOpen,
-  barId,
-  role,
   onClose,
-  onSuccess,
+  businessDate: propDate,
+  onDayClosed,
 }: CloseDayModalProps) {
-  const [settings, setSettings] = useState<CloseDaySettings>(
-    defaultCloseDaySettings,
-  );
-  const [date, setDate] = useState("");
-  const [cashSales, setCashSales] = useState("");
-  const [mpesaSales, setMpesaSales] = useState("");
-  const [credits, setCredits] = useState<CustomerCredit[]>([]);
-  const [openCredits, setOpenCredits] = useState<UnpaidBill[]>([]);
-  const [activeStaff, setActiveStaff] = useState<StaffMember[]>([]);
-  const [settlements, setSettlements] = useState<Record<string, PaymentMethod>>({});
-  const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
-  const [notes, setNotes] = useState("");
-  const [ledgerPhoto, setLedgerPhoto] = useState<File | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  // NEW
+  const { barContext } = useBarContext();
+  const activeBar = barContext
+  ? { id: barContext.barId, name: barContext.barName }
+  : null;
+  const businessDate = propDate || new Date().toISOString().split('T')[0];
+
+  const [step, setStep] = useState<'count' | 'tenders' | 'report'>('count');
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Step 1: Blind Stock Count State
+  const [rows, setRows] = useState<BlindProductCountRow[]>([]);
+  const [search, setSearch] = useState('');
+
+  // Step 2: Blind Cash & M-PESA State
+  const [openingCash, setOpeningCash] = useState('0');
+  const [actualCash, setActualCash] = useState('');
+  const [actualMpesa, setActualMpesa] = useState('');
+  const [notes, setNotes] = useState('');
+
+  // Step 3: Post-Closure Variance Report
+  const [report, setReport] = useState<DailyClosureReport | null>(null);
 
   useEffect(() => {
-    if (!isOpen || !barId) {
-      return;
-    }
+    if (!isOpen || !activeBar?.id) return;
 
-    const loadSettings = async () => {
-      const [{ settings: nextSettings }, { staff: nextStaff }] =
-        await Promise.all([
-          getCloseDaySettings(barId),
-          getActiveStaffForBar(barId),
+    const init = async () => {
+      setLoading(true);
+      setError(null);
+      setStep('count');
+      setReport(null);
+      setActualCash('');
+      setActualMpesa('');
+      setNotes('');
+
+      try {
+        const [sheet, suggestedFloat] = await Promise.all([
+          dailyClosureService.getBlindCountSheet(activeBar.id),
+          dailyClosureService.getSuggestedOpeningCash(activeBar.id, businessDate),
         ]);
-      setSettings(nextSettings);
-      setActiveStaff(nextStaff);
-    };
-
-    loadSettings();
-  }, [barId, isOpen]);
-
-  useEffect(() => {
-    if (!isOpen || !barId || !date || !settings.showBills) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadOpenCredits = async () => {
-      const { bills: nextCredits } = await getUnpaidBillsForBar(barId, date);
-
-      if (!cancelled) {
-        setOpenCredits(nextCredits);
-        setSettlements({});
+        setRows(sheet);
+        setOpeningCash(String(suggestedFloat));
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
       }
     };
 
-    loadOpenCredits();
+    init();
+  }, [isOpen, activeBar?.id, businessDate]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [barId, date, isOpen, settings.showBills]);
+  const filteredRows = useMemo(() => {
+    return rows.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()));
+  }, [rows, search]);
 
-  if (!isOpen) {
-    return null;
-  }
+  const countedProducts = useMemo(
+    () => rows.filter((r) => r.actual_closing_stock !== '' && r.actual_closing_stock !== null),
+    [rows]
+  );
 
-  function resetForm() {
-    setDate("");
-    setCashSales("");
-    setMpesaSales("");
-    setCredits([]);
-    setOpenCredits([]);
-    setSettlements({});
-    setExpenses([]);
-    setNotes("");
-    setLedgerPhoto(null);
-    setErrorMessage("");
-  }
+  const updateCount = (productId: string, rawVal: string) => {
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.product_id !== productId) return row;
+        if (rawVal === '') return { ...row, actual_closing_stock: '' };
+        const num = Math.max(0, Number(rawVal));
+        return { ...row, actual_closing_stock: Number.isNaN(num) ? '' : num };
+      })
+    );
+  };
 
-  async function handleCloseDay() {
-    setSaving(true);
-    setErrorMessage("");
+  const handleProceedToTenders = () => {
+    setError(null);
+    if (countedProducts.length < rows.length) {
+      setError(
+        `Please enter a physical count for all ${rows.length} products (${
+          rows.length - countedProducts.length
+        } remaining). Enter 0 if empty.`
+      );
+      return;
+    }
+    setStep('tenders');
+  };
+
+  const handleFinalCloseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBar?.id) return;
+
+    if (actualCash === '' || actualMpesa === '') {
+      setError('Enter both counted Cash in Drawer and actual M-PESA total.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
 
     try {
-      const settledBills = getSelectedSettlements(openCredits, settlements);
-      const { error } = await closeBusinessDay({
-        barId,
-        businessDate: date,
-        cashSales: Number(cashSales) || 0,
-        mpesaSales: Number(mpesaSales) || 0,
+      const closedReport = await dailyClosureService.submitCloseBusinessDay({
+        barId: activeBar.id,
+        businessDate,
+        openingCash: Number(openingCash || 0),
+        actualCash: Number(actualCash),
+        actualMpesa: Number(actualMpesa),
+        blindCounts: rows.map((r) => ({
+          product_id: r.product_id,
+          actual_closing_stock: Number(r.actual_closing_stock || 0),
+        })),
         notes,
-        products: [],
-        credits: credits.filter(
-          (credit) =>
-            credit.staffName.trim() &&
-            credit.customerName.trim() &&
-            credit.amount > 0,
-        ),
-        settledBills,
-        expenses: expenses.filter(
-          (expense) => expense.expenseType.trim() && expense.amount > 0,
-        ),
-        ledgerPhoto: settings.showLedgerPhoto ? ledgerPhoto : null,
-        role,
       });
 
-      if (error) {
-        setErrorMessage(error);
-        return;
-      }
-
-      onSuccess?.();
-      onClose();
-      resetForm();
-    } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Failed to close business day.",
-      );
+      setReport(closedReport);
+      setStep('report');
+      onDayClosed?.(closedReport);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
-  }
+  };
 
-  function updateCredit(index: number, credit: CustomerCredit) {
-    setCredits((current) =>
-      current.map((item, itemIndex) => (itemIndex === index ? credit : item)),
-    );
-  }
+  if (!isOpen) return null;
 
-  function updateCreditStaff(index: number, staffId: string) {
-    const member = activeStaff.find((item) => item.id === staffId);
-
-    updateCredit(index, {
-      ...credits[index],
-      staffId: member?.id ?? "",
-      staffName: member?.name ?? "",
-    });
-  }
-
-  function updateExpense(index: number, expense: ExpenseEntry) {
-    setExpenses((current) =>
-      current.map((item, itemIndex) => (itemIndex === index ? expense : item)),
-    );
-  }
-
-  function updateDate(nextDate: string) {
-    setDate(nextDate);
-    setOpenCredits([]);
-    setSettlements({});
-  }
-
-  function toggleSettlement(creditId: string) {
-    setSettlements((current) => {
-      if (current[creditId]) {
-        const next = { ...current };
-        delete next[creditId];
-        return next;
-      }
-
-      return {
-        ...current,
-        [creditId]: "cash",
-      };
-    });
-  }
-
-  function updateSettlementMethod(creditId: string, paymentMethod: PaymentMethod) {
-    setSettlements((current) => ({
-      ...current,
-      [creditId]: paymentMethod,
-    }));
-  }
-
-  const selectedSettlements = getSelectedSettlements(openCredits, settlements);
-  const settledCashTotal = selectedSettlements
-    .filter((settlement) => settlement.paymentMethod === "cash")
-    .reduce((total, settlement) => total + settlement.amount, 0);
-  const settledMpesaTotal = selectedSettlements
-    .filter((settlement) => settlement.paymentMethod === "mpesa")
-    .reduce((total, settlement) => total + settlement.amount, 0);
-  const settledTotal = settledCashTotal + settledMpesaTotal;
+  const cashVariance = report ? report.actual_cash - report.expected_cash : 0;
+  const mpesaVariance = report ? report.actual_mpesa - report.expected_mpesa : 0;
+  const discrepantItems = report
+    ? report.items.filter((item) => item.variance_stock !== 0)
+    : [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
-      <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[90vh] sm:max-w-2xl sm:rounded-3xl">
-        <div className="flex items-center justify-between border-b border-slate-200 p-4 sm:p-5">
-          <div className="min-w-0">
-            <h2 className="text-xl font-bold text-slate-950 sm:text-2xl">
-              Daily Closure
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Submit payment totals, bills, expenses and notes.
-            </p>
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
+        className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4"
+      >
+        <motion.div
+          initial={{ y: 30, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 30, opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-t-3xl md:rounded-3xl flex flex-col max-h-[92vh] text-zinc-100"
+        >
+          {/* Header */}
+          <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-amber-400" />
+                <h2 className="text-lg font-bold">
+                  {step === 'report' ? 'Day Closed & Locked' : 'Close Business Day'}
+                </h2>
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                {activeBar?.name} • Date: <span className="font-mono">{businessDate}</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            aria-label="Close daily closure modal"
-          >
-            <X size={20} />
-          </button>
-        </div>
+          {/* Stepper Pill */}
+          {step !== 'report' && (
+            <div className="px-5 py-2.5 bg-zinc-950/60 border-b border-zinc-800 flex items-center gap-3 text-xs">
+              <span
+                className={`flex items-center gap-1.5 font-semibold ${
+                  step === 'count' ? 'text-emerald-400' : 'text-zinc-400'
+                }`}
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                1. Blind Stock Count ({countedProducts.length}/{rows.length})
+              </span>
+              <span className="text-zinc-600">&rarr;</span>
+              <span
+                className={`flex items-center gap-1.5 font-semibold ${
+                  step === 'tenders' ? 'text-emerald-400' : 'text-zinc-400'
+                }`}
+              >
+                <Banknote className="w-4 h-4" />
+                2. Cash & M-PESA Count
+              </span>
+            </div>
+          )}
 
-        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
-          <FormField icon={<CalendarDays size={20} />} label="Business Date">
-            <input
-              type="date"
-              value={date}
-              onChange={(event) => updateDate(event.target.value)}
-              className="input"
-            />
-          </FormField>
+          {/* Error Banner */}
+          {error && (
+            <div className="mx-5 mt-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <FormField icon={<Smartphone size={20} />} label="M-Pesa Total">
-              <input
-                type="number"
-                value={mpesaSales}
-                onChange={(event) => setMpesaSales(event.target.value)}
-                placeholder="0.00"
-                className="input"
-              />
-            </FormField>
+          {/* BODY */}
+          <div className="p-5 overflow-y-auto flex-1">
+            {loading ? (
+              <div className="py-12 text-center text-sm text-zinc-400">
+                Preparing blind count sheet...
+              </div>
+            ) : step === 'count' ? (
+              <div className="space-y-4">
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-200">
+                  <strong>Blind Count Mode:</strong> Count physical bottles/cans on shelves and in
+                  fridges. Expected system quantities remain hidden until the day is locked.
+                </div>
 
-            <FormField icon={<Banknote size={20} />} label="Cash Total">
-              <input
-                type="number"
-                value={cashSales}
-                onChange={(event) => setCashSales(event.target.value)}
-                placeholder="0.00"
-                className="input"
-              />
-            </FormField>
-          </div>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Filter products..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
 
-          {settings.showBills && (
-            <section className="space-y-3">
-              {openCredits.length > 0 && (
-                <div className="space-y-3">
+                <div className="divide-y divide-zinc-800 border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-950/40">
+                  {filteredRows.map((row) => (
+                    <div
+                      key={row.product_id}
+                      className="px-4 py-3 flex items-center justify-between gap-3"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-zinc-100">{row.name}</p>
+                        <p className="text-[11px] text-zinc-500 uppercase">
+                          {row.category} • {row.unit}s
+                        </p>
+                      </div>
+
+                      <input
+                        type="number"
+                        min={0}
+                        step="1"
+                        inputMode="numeric"
+                        placeholder="Qty"
+                        value={row.actual_closing_stock}
+                        onChange={(e) => updateCount(row.product_id, e.target.value)}
+                        className={`w-24 text-right font-mono font-bold text-base rounded-xl px-3 py-2 border focus:outline-none ${
+                          row.actual_closing_stock !== ''
+                            ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-300'
+                            : 'bg-zinc-900 border-zinc-700 text-zinc-100'
+                        }`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : step === 'tenders' ? (
+              <form id="close-day-form" onSubmit={handleFinalCloseSubmit} className="space-y-4">
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-400">
+                  Count physical cash in the drawer and check your M-PESA Till/Paybill balance for{' '}
+                  <strong className="text-zinc-200">{businessDate}</strong>. Once submitted, all
+                  sales and stock logs for this date are permanently locked.
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-900">
-                      Settle Carried Bills
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Mark unpaid bills settled for this business date.
-                    </p>
+                    <label className="block text-xs text-zinc-400 mb-1">
+                      Opening Cash Float (KES)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      required
+                      value={openingCash}
+                      onChange={(e) => setOpeningCash(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm font-mono"
+                    />
                   </div>
 
-                  <div className="space-y-2">
-                    {openCredits.map((credit) => {
-                      const paymentMethod = settlements[credit.id];
-                      const isSettled = Boolean(paymentMethod);
-
-                      return (
-                        <label
-                          key={credit.id}
-                          className="flex items-start gap-3 rounded-xl border border-slate-200 p-3"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSettled}
-                            onChange={() => toggleSettlement(credit.id)}
-                            className="mt-1 h-4 w-4 rounded border-slate-300"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium text-slate-900">
-                              {credit.customerName}
-                            </span>
-                            <span className="block text-xs text-slate-500">
-                              {credit.staffName}
-                              {credit.staffId ? ` (${credit.staffId})` : ""} -
-                              {" "}
-                              {credit.businessDate}
-                            </span>
-                          </span>
-                          <span className="shrink-0 text-sm font-semibold text-slate-900">
-                            {new Intl.NumberFormat("en-KE", {
-                              style: "currency",
-                              currency: "KES",
-                              maximumFractionDigits: 0,
-                            }).format(credit.amount)}
-                          </span>
-                          {isSettled && (
-                            <select
-                              value={paymentMethod}
-                              onChange={(event) =>
-                                updateSettlementMethod(
-                                  credit.id,
-                                  event.target.value as PaymentMethod,
-                                )
-                              }
-                              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
-                              aria-label={`Payment method for ${credit.customerName}`}
-                            >
-                              <option value="cash">Cash</option>
-                              <option value="mpesa">M-Pesa</option>
-                            </select>
-                          )}
-                        </label>
-                      );
-                    })}
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1">
+                      Actual Cash Counted (KES) *
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      required
+                      value={actualCash}
+                      onChange={(e) => setActualCash(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono focus:border-emerald-500 focus:outline-none"
+                    />
                   </div>
 
-                  {settledTotal > 0 && (
-                    <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-900">
-                      <p className="font-bold">Settlement total</p>
-                      <p className="mt-1 text-xs">
-                        Cash: {formatKes(settledCashTotal)} - M-Pesa:{" "}
-                        {formatKes(settledMpesaTotal)} - Total:{" "}
-                        {formatKes(settledTotal)}
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1">
+                      Actual M-PESA Total (KES) *
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      required
+                      value={actualMpesa}
+                      onChange={(e) => setActualMpesa(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">
+                    Shift Notes / Discrepancy Explanation (Optional)
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Note any broken bottles, power outages, or till delays..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm"
+                  />
+                </div>
+              </form>
+            ) : (
+              /* STEP 3: POST-LOCK VARIANCE REPORT */
+              report && (
+                <div className="space-y-5">
+                  <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>Reconciliation complete. Business date {report.business_date} is now locked.</span>
+                  </div>
+
+                  {/* Financial Summary Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800">
+                      <p className="text-xs text-zinc-400">Cash Variance</p>
+                      <p
+                        className={`text-lg font-extrabold font-mono mt-1 ${
+                          cashVariance < 0
+                            ? 'text-rose-400'
+                            : cashVariance > 0
+                            ? 'text-amber-400'
+                            : 'text-emerald-400'
+                        }`}
+                      >
+                        {cashVariance >= 0 ? '+' : ''}KES {cashVariance.toLocaleString()}
+                      </p>
+                      <p className="text-[11px] text-zinc-500 mt-1">
+                        Exp: {report.expected_cash.toLocaleString()} | Act:{' '}
+                        {report.actual_cash.toLocaleString()}
                       </p>
                     </div>
-                  )}
-                </div>
-              )}
 
-              <SectionHeader
-                icon={<UserRound size={18} />}
-                title="Unpaid Bills"
-                onAdd={() =>
-                  setCredits((current) => [...current, { ...emptyCredit }])
-                }
-              />
+                    <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800">
+                      <p className="text-xs text-zinc-400">M-PESA Variance</p>
+                      <p
+                        className={`text-lg font-extrabold font-mono mt-1 ${
+                          mpesaVariance < 0
+                            ? 'text-rose-400'
+                            : mpesaVariance > 0
+                            ? 'text-amber-400'
+                            : 'text-emerald-400'
+                        }`}
+                      >
+                        {mpesaVariance >= 0 ? '+' : ''}KES {mpesaVariance.toLocaleString()}
+                      </p>
+                      <p className="text-[11px] text-zinc-500 mt-1">
+                        Exp: {report.expected_mpesa.toLocaleString()} | Act:{' '}
+                        {report.actual_mpesa.toLocaleString()}
+                      </p>
+                    </div>
 
-              {credits.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  No new unpaid bills to carry forward.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {credits.map((credit, index) => (
-                    <div
-                      key={index}
-                      className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_120px_auto]"
-                    >
-                      {activeStaff.length > 0 ? (
-                        <select
-                          value={credit.staffId ?? ""}
-                          onChange={(event) =>
-                            updateCreditStaff(index, event.target.value)
-                          }
-                          className="input"
-                          aria-label="Responsible staff"
-                        >
-                          <option value="">Choose staff</option>
-                          {activeStaff.map((member) => (
-                            <option key={member.id} value={member.id}>
-                              {member.name}
-                              {member.staffCode ? ` (${member.staffCode})` : ""}
-                            </option>
+                    <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800">
+                      <p className="text-xs text-zinc-400">Stock Variance (Retail)</p>
+                      <p
+                        className={`text-lg font-extrabold font-mono mt-1 ${
+                          report.stock_variance_value < 0
+                            ? 'text-rose-400'
+                            : 'text-emerald-400'
+                        }`}
+                      >
+                        {report.stock_variance_value >= 0 ? '+' : ''}KES{' '}
+                        {report.stock_variance_value.toLocaleString()}
+                      </p>
+                      <p className="text-[11px] text-zinc-500 mt-1">
+                        Gross Profit: KES {report.profit_total.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Stock Discrepancy Table */}
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">
+                      Stock Variance Breakdown ({discrepantItems.length} items with variance)
+                    </h3>
+                    <div className="border border-zinc-800 rounded-2xl overflow-hidden">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-zinc-950 text-zinc-400 border-b border-zinc-800">
+                          <tr>
+                            <th className="py-2.5 px-3">Product</th>
+                            <th className="py-2.5 px-2 text-right">Open</th>
+                            <th className="py-2.5 px-2 text-right">In</th>
+                            <th className="py-2.5 px-2 text-right">Sold</th>
+                            <th className="py-2.5 px-2 text-right">Exp</th>
+                            <th className="py-2.5 px-2 text-right">Count</th>
+                            <th className="py-2.5 px-3 text-right">Diff</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800 bg-zinc-950/40">
+                          {report.items.map((item) => (
+                            <tr
+                              key={item.id}
+                              className={item.variance_stock < 0 ? 'bg-rose-500/10' : ''}
+                            >
+                              <td className="py-2 px-3 font-medium">{item.product_name}</td>
+                              <td className="py-2 px-2 text-right font-mono">{item.opening_stock}</td>
+                              <td className="py-2 px-2 text-right font-mono">{item.purchased_stock}</td>
+                              <td className="py-2 px-2 text-right font-mono">{item.quantity_sold}</td>
+                              <td className="py-2 px-2 text-right font-mono">
+                                {item.expected_closing_stock}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono">{item.closing_stock}</td>
+                              <td
+                                className={`py-2 px-3 text-right font-mono font-bold ${
+                                  item.variance_stock < 0
+                                    ? 'text-rose-400'
+                                    : item.variance_stock > 0
+                                    ? 'text-amber-400'
+                                    : 'text-zinc-500'
+                                }`}
+                              >
+                                {item.variance_stock > 0 ? `+${item.variance_stock}` : item.variance_stock}
+                              </td>
+                            </tr>
                           ))}
-                        </select>
-                      ) : (
-                        <input
-                          value={credit.staffName}
-                          onChange={(event) =>
-                            updateCredit(index, {
-                              ...credit,
-                              staffName: event.target.value,
-                            })
-                          }
-                          placeholder="Staff name or ID"
-                          className="input"
-                        />
-                      )}
-                      <input
-                        value={credit.customerName}
-                        onChange={(event) =>
-                          updateCredit(index, {
-                            ...credit,
-                            customerName: event.target.value,
-                          })
-                        }
-                        placeholder="Customer name"
-                        className="input"
-                      />
-                      <input
-                        type="number"
-                        value={credit.amount || ""}
-                        onChange={(event) =>
-                          updateCredit(index, {
-                            ...credit,
-                            amount: Number(event.target.value) || 0,
-                          })
-                        }
-                        placeholder="Amount"
-                        className="input"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCredits((current) =>
-                            current.filter((_, itemIndex) => itemIndex !== index),
-                          )
-                        }
-                        className="flex items-center justify-center rounded-lg border border-slate-200 px-3 py-2 text-slate-600 hover:bg-slate-50"
-                        aria-label="Remove bill"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
+                  </div>
                 </div>
-              )}
-            </section>
-          )}
+              )
+            )}
+          </div>
 
-          {settings.showDailyExpenses && (
-            <section className="space-y-3">
-              <SectionHeader
-                icon={<ReceiptText size={18} />}
-                title="Daily Expenses"
-                onAdd={() =>
-                  setExpenses((current) => [...current, { ...emptyExpense }])
-                }
-              />
+          {/* FOOTER */}
+          <div className="px-5 py-4 border-t border-zinc-800 flex items-center justify-between gap-3">
+            {step === 'count' && (
+              <>
+                <Button type="button" variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleProceedToTenders}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold"
+                >
+                  Next: Cash & M-PESA <ArrowRight className="w-4 h-4 ml-1.5" />
+                </Button>
+              </>
+            )}
 
-              {expenses.length === 0 ? (
-                <p className="text-sm text-slate-500">No expenses added.</p>
-              ) : (
-                <div className="space-y-3">
-                  {expenses.map((expense, index) => (
-                    <div
-                      key={index}
-                      className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_120px_auto]"
-                    >
-                      <input
-                        list="expense-options"
-                        value={expense.expenseType}
-                        onChange={(event) =>
-                          updateExpense(index, {
-                            ...expense,
-                            expenseType: event.target.value,
-                          })
-                        }
-                        placeholder="Expense type"
-                        className="input"
-                      />
-                      <input
-                        value={expense.description}
-                        onChange={(event) =>
-                          updateExpense(index, {
-                            ...expense,
-                            description: event.target.value,
-                          })
-                        }
-                        placeholder="Description"
-                        className="input"
-                      />
-                      <input
-                        type="number"
-                        value={expense.amount || ""}
-                        onChange={(event) =>
-                          updateExpense(index, {
-                            ...expense,
-                            amount: Number(event.target.value) || 0,
-                          })
-                        }
-                        placeholder="Cost"
-                        className="input"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpenses((current) =>
-                            current.filter((_, itemIndex) => itemIndex !== index),
-                          )
-                        }
-                        className="flex items-center justify-center rounded-lg border border-slate-200 px-3 py-2 text-slate-600 hover:bg-slate-50"
-                        aria-label="Remove expense"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+            {step === 'tenders' && (
+              <>
+                <Button type="button" variant="ghost" onClick={() => setStep('count')}>
+                  <ArrowLeft className="w-4 h-4 mr-1.5" /> Back to Stock Count
+                </Button>
+                <Button
+                  type="submit"
+                  form="close-day-form"
+                  disabled={submitting}
+                  className="bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold"
+                >
+                  <Lock className="w-4 h-4 mr-1.5" />
+                  {submitting ? 'Locking Day...' : 'Lock & Close Business Day'}
+                </Button>
+              </>
+            )}
 
-              <datalist id="expense-options">
-                {settings.expenseOptions.map((option) => (
-                  <option key={option} value={option} />
-                ))}
-              </datalist>
-            </section>
-          )}
-
-          <FormField icon={<FileText size={20} />} label="Notes">
-            <textarea
-              rows={4}
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              className="input resize-none"
-              placeholder="Optional comments for the owner"
-            />
-          </FormField>
-
-          {settings.showLedgerPhoto && (
-            <FormField icon={<FileImage size={20} />} label="Ledger Photo">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(event) => setLedgerPhoto(event.target.files?.[0] ?? null)}
-                className="input"
-              />
-            </FormField>
-          )}
-
-          {errorMessage && (
-            <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {errorMessage}
-            </p>
-          )}
-        </div>
-
-        <div className="sticky bottom-0 flex flex-col gap-3 border-t border-slate-200 bg-white p-4 sm:flex-row">
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-h-11 flex-1 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          >
-            Cancel
-          </button>
-
-          <button
-            type="button"
-            disabled={saving}
-            onClick={handleCloseDay}
-            className="min-h-11 flex-1 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60"
-          >
-            {saving ? "Closing Day..." : "Submit Close Day"}
-          </button>
-        </div>
-      </div>
-    </div>
+            {step === 'report' && (
+              <Button
+                type="button"
+                onClick={onClose}
+                className="w-full bg-zinc-100 hover:bg-white text-zinc-950 font-bold"
+              >
+                Done
+              </Button>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
-
-function SectionHeader({
-  icon,
-  title,
-  onAdd,
-}: {
-  icon: ReactNode;
-  title: string;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-        <span className="text-blue-600">{icon}</span>
-        {title}
-      </h3>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-      >
-        <Plus size={16} />
-        Add
-      </button>
-    </div>
-  );
-}
-
-function FormField({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-        <span className="text-blue-600">{icon}</span>
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function getSelectedSettlements(
-  bills: UnpaidBill[],
-  settlements: Record<string, PaymentMethod>,
-): BillSettlement[] {
-  return bills
-    .filter((bill) => settlements[bill.id])
-    .map((bill) => ({
-      id: bill.id,
-      amount: bill.amount,
-      paymentMethod: settlements[bill.id],
-    }));
-}
+export default CloseDayModal;
