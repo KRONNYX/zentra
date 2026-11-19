@@ -1,4 +1,4 @@
-import { BarChart3, LineChart, Package, Settings, UsersRound } from "lucide-react";
+import { BarChart3, Package, UsersRound } from "lucide-react";
 import { canViewRoute } from "@/lib/permissions";
 
 export const navItems = [

@@ -5,6 +5,24 @@ import {
   DailyClosureReport,
 } from '@/types/dailyClosure';
 
+type NumericValue = number | string | null;
+
+interface ClosureItemRow {
+  id: string;
+  product_id: string;
+  opening_stock: NumericValue;
+  purchased_stock: NumericValue;
+  wastage_stock: NumericValue;
+  quantity_sold: NumericValue;
+  expected_closing_stock: NumericValue;
+  closing_stock: NumericValue;
+  variance_stock: NumericValue;
+  selling_price: NumericValue;
+  revenue_generated: NumericValue;
+  profit_generated: NumericValue;
+  products: { name: string | null; unit: string | null } | null;
+}
+
 export const dailyClosureService = {
   /**
    * Fetches active products WITHOUT `current_stock` so the physical count
@@ -118,7 +136,7 @@ export const dailyClosureService = {
       throw new Error(itemsErr.message);
     }
 
-    const items = (itemRows || []).map((row: any) => ({
+    const items = ((itemRows || []) as unknown as ClosureItemRow[]).map((row) => ({
       id: row.id,
       product_id: row.product_id,
       product_name: row.products?.name || 'Unknown Product',

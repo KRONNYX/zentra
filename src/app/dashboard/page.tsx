@@ -3,6 +3,8 @@
 import {supabase} from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
+import { currentBusinessDate } from '@/lib/businessDate';
+import { errorMessage } from '@/lib/utils';
 import Link from 'next/link';
 import {
   Lock,
@@ -21,33 +23,68 @@ import { Button } from '@/components/ui/button';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { barContext, loading: authLoading } = useBarContext();
+  const { barContext, loading: authLoading, error: barError, user } = useBarContext();
   const activeBar = barContext
     ? { id: barContext.barId, name: barContext.barName, role: barContext.role }
     : null;
+  const barId = activeBar?.id;
+  const canViewTakings =
+    activeBar?.role === 'owner' || activeBar?.role === 'manager' || activeBar?.role === 'super_user';
 
   const [data, setData] = useState<MvpDashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
 
-  const businessDate = new Date().toISOString().split('T')[0];
-
-  const loadDashboard = async () => {
-    if (!activeBar?.id) return;
-    setLoading(true);
-    try {
-      const res = await getMvpDashboardData(activeBar.id, businessDate);
-      setData(res);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const businessDate = currentBusinessDate();
 
   useEffect(() => {
-    loadDashboard();
-  }, [activeBar?.id]);
+    if (!barId || !canViewTakings) return;
+    let cancelled = false;
+    getMvpDashboardData(barId, businessDate)
+      .then((res) => {
+        if (cancelled) return;
+        setData(res);
+        setLoadError('');
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(errorMessage(err, 'Failed to load dashboard.'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [barId, canViewTakings, businessDate, reloadKey]);
 
-  if (authLoading || loading) {
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-400 p-6 flex items-center justify-center text-sm">
+        Loading bar overview...
+      </div>
+    );
+  }
+
+  if (!user || !activeBar || !canViewTakings || loadError) {
+    const message = !user
+      ? 'You need to sign in to view the dashboard.'
+      : !activeBar
+        ? barError || 'No active bar linked to your account yet.'
+        : !canViewTakings
+          ? 'Only owners and managers can view takings and Close Day.'
+          : loadError;
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-300 p-6 flex flex-col items-center justify-center gap-4 text-sm text-center">
+        <p>{message}</p>
+        <Link
+          href={!user ? '/login' : '/orders'}
+          className="px-4 py-2 rounded-xl bg-emerald-500 text-zinc-950 font-bold"
+        >
+          {!user ? 'Go to Login' : 'Open POS'}
+        </Link>
+      </div>
+    );
+  }
+
+  if (!data) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-400 p-6 flex items-center justify-center text-sm">
         Loading bar overview...
@@ -244,7 +281,7 @@ export default function DashboardPage() {
         isOpen={isCloseModalOpen}
         onClose={() => setIsCloseModalOpen(false)}
         businessDate={businessDate}
-        onDayClosed={() => loadDashboard()}
+        onDayClosed={() => setReloadKey((key) => key + 1)}
       />
     </div>
   );
