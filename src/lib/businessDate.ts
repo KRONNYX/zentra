@@ -1,9 +1,12 @@
-// Matches public.current_business_date(): Nairobi time, rolling over at 06:00
-// so a shift that runs past midnight is one business day.
-const BUSINESS_DAY_CUTOFF_HOURS = 6;
+export const DEFAULT_BUSINESS_DAY_CUTOFF = "06:00";
 
-export function currentBusinessDate(now = new Date()) {
-  const shifted = new Date(now.getTime() - BUSINESS_DAY_CUTOFF_HOURS * 60 * 60 * 1000);
+// Matches public.current_business_date(bar_id): Nairobi time, rolling over at
+// the bar's cutoff so a shift that runs past midnight is one business day.
+export function currentBusinessDate(cutoff?: string | null, now = new Date()) {
+  const [hours = 6, minutes = 0] = (cutoff || DEFAULT_BUSINESS_DAY_CUTOFF)
+    .split(":")
+    .map(Number);
+  const shifted = new Date(now.getTime() - (hours * 60 + minutes) * 60 * 1000);
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Nairobi",
     year: "numeric",

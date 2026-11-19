@@ -11,6 +11,17 @@ alter table public.bar_memberships add column if not exists is_active boolean no
 
 alter table public.users add column if not exists name text;
 
+-- When a bar's business day ends (Nairobi time). Sales before this time count
+-- towards the previous night's shift. Late-night bars can set e.g. 08:00.
+alter table public.bars add column if not exists business_day_cutoff time not null default '06:00';
+alter table public.bars drop constraint if exists bars_business_day_cutoff_check;
+alter table public.bars add constraint bars_business_day_cutoff_check
+  check (business_day_cutoff <= time '12:00');
+
+-- Superseded by "Role manage own bars" (owners and super users only); this
+-- older policy let any member, including staff, edit bar settings.
+drop policy if exists "Members can update their bars" on public.bars;
+
 alter table public.audit_logs add column if not exists entity_id uuid;
 
 alter table public.products add column if not exists purchase_price numeric;
@@ -120,14 +131,21 @@ as $$
   select public.has_bar_role(p_bar_id, array['owner', 'manager', 'staff']);
 $$;
 
--- A bar's business day runs on Nairobi time and rolls over at 06:00, so a
--- shift that runs past midnight is recorded as one night.
-create or replace function public.current_business_date()
+-- A bar's business day runs on Nairobi time and rolls over at the bar's
+-- business_day_cutoff, so a shift that runs past midnight is one night.
+drop function if exists public.current_business_date(p_bar_id);
+
+create or replace function public.current_business_date(p_bar_id uuid)
 returns date
 language sql
 stable
+security definer
+set search_path = public
 as $$
-  select ((now() at time zone 'Africa/Nairobi') - interval '6 hours')::date;
+  select ((now() at time zone 'Africa/Nairobi') - coalesce(
+    (select business_day_cutoff from public.bars where id = p_bar_id),
+    time '06:00'
+  )::interval)::date;
 $$;
 
 create or replace function public.is_business_day_closed(p_bar_id uuid, p_business_date date)
@@ -173,7 +191,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_business_date date := public.current_business_date();
+  v_business_date date := public.current_business_date(p_bar_id);
   v_sale_id uuid;
   v_total numeric(12,2) := 0;
   v_item jsonb;
@@ -311,7 +329,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_business_date date := public.current_business_date();
+  v_business_date date := public.current_business_date(p_bar_id);
   v_tab public.customer_credits%rowtype;
   v_sale_id uuid;
   v_clean_code text;
@@ -429,7 +447,7 @@ begin
     raise exception 'Unauthorized: Only a Manager or Owner can close the business day.';
   end if;
 
-  if p_business_date > public.current_business_date() then
+  if p_business_date > public.current_business_date(p_bar_id) then
     raise exception 'Cannot close a business date that has not started yet.';
   end if;
 
@@ -552,7 +570,7 @@ revoke all on function public.close_business_day(uuid, date, numeric, numeric, n
 grant execute on function public.record_pos_sale(uuid, jsonb, numeric, numeric, text, text, boolean, text, text) to authenticated;
 grant execute on function public.settle_customer_tab(uuid, uuid, text, text) to authenticated;
 grant execute on function public.close_business_day(uuid, date, numeric, numeric, numeric, jsonb, text) to authenticated;
-grant execute on function public.current_business_date() to authenticated;
+grant execute on function public.current_business_date(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- RLS: staff record money only through the functions above, so they cannot

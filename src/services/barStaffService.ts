@@ -1,6 +1,7 @@
 "use client";
 
 import { supabase } from "@/lib/supabaseClient";
+import { DEFAULT_BUSINESS_DAY_CUTOFF } from "@/lib/businessDate";
 import { hasPermission } from "@/lib/permissions";
 
 export const staffPermissionOptions = [
@@ -18,6 +19,7 @@ export type BarProfile = {
   phone: string;
   email: string;
   imageUrl: string;
+  businessDayCutoff: string;
 };
 
 export type StaffForm = {
@@ -53,6 +55,7 @@ type BarRow = {
   phone?: string | null;
   email?: string | null;
   image_url?: string | null;
+  business_day_cutoff?: string | null;
 };
 
 type StaffRow = {
@@ -116,6 +119,7 @@ function mapBar(row: BarRow | null | undefined): BarProfile {
     phone: row?.phone ?? "",
     email: row?.email ?? "",
     imageUrl: row?.image_url ?? "",
+    businessDayCutoff: (row?.business_day_cutoff ?? DEFAULT_BUSINESS_DAY_CUTOFF).slice(0, 5),
   };
 }
 
@@ -145,7 +149,7 @@ export async function getBarStaff(barId: string) {
   const [barResult, staffResult, shiftsResult] = await Promise.all([
     supabase
       .from("bars")
-      .select("name, address, phone, email, image_url")
+      .select("name, address, phone, email, image_url, business_day_cutoff")
       .eq("id", barId)
       .maybeSingle<BarRow>(),
     supabase
@@ -243,6 +247,7 @@ export async function updateBarProfile(
       phone: profile.phone.trim() || null,
       email: profile.email.trim() || null,
       image_url: profile.imageUrl.trim() || null,
+      business_day_cutoff: profile.businessDayCutoff || DEFAULT_BUSINESS_DAY_CUTOFF,
     })
     .eq("id", barId);
 

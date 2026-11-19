@@ -25,6 +25,7 @@ import {
   isValidMpesaCode,
 } from '@/services/orderService';
 import { Button } from '@/components/ui/button';
+import AppShell from '@/components/layout/AppShell';
 import { currentBusinessDate } from '@/lib/businessDate';
 import { errorMessage } from '@/lib/utils';
 
@@ -52,6 +53,14 @@ async function fetchPosData(barId: string) {
 }
 
 export default function PosOrdersPage() {
+  return (
+    <AppShell>
+      <PosOrders />
+    </AppShell>
+  );
+}
+
+function PosOrders() {
   const { barContext, loading: authLoading, error: barError, user } = useBarContext();
   const activeBar = barContext
   ? { id: barContext.barId, name: barContext.barName }
@@ -82,7 +91,7 @@ export default function PosOrdersPage() {
   const [settleMethod, setSettleMethod] = useState<'cash' | 'mpesa'>('mpesa');
   const [settleCode, setSettleCode] = useState('');
 
-  const businessDate = currentBusinessDate();
+  const businessDate = currentBusinessDate(barContext?.businessDayCutoff);
 
   const barId = activeBar?.id;
 
@@ -453,7 +462,7 @@ export default function PosOrdersPage() {
 
       {/* STICKY BOTTOM CART BAR */}
       {activeView === 'pos' && cart.length > 0 && !isCheckoutOpen && (
-        <div className="fixed bottom-16 md:bottom-4 inset-x-4 z-30">
+        <div className="fixed bottom-24 lg:bottom-4 inset-x-4 lg:left-[296px] z-30">
           <motion.button
             type="button"
             initial={{ y: 20, opacity: 0 }}

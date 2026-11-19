@@ -1,8 +1,9 @@
-import { BarChart3, Package, UsersRound } from "lucide-react";
+import { BarChart3, Package, ShoppingCart, UsersRound } from "lucide-react";
 import { canViewRoute } from "@/lib/permissions";
 
 export const navItems = [
   { href: "/dashboard", label: "Home", icon: BarChart3 },
+  { href: "/orders", label: "POS", icon: ShoppingCart },
   { href: "/products", label: "Products", icon: Package },
   { href: "/bar-staff", label: "Staff", icon: UsersRound },
 ];

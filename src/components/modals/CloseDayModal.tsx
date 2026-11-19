@@ -37,7 +37,7 @@ export function CloseDayModal({
   const activeBar = barContext
   ? { id: barContext.barId, name: barContext.barName }
   : null;
-  const businessDate = propDate || currentBusinessDate();
+  const businessDate = propDate || currentBusinessDate(barContext?.businessDayCutoff);
 
   const [step, setStep] = useState<'count' | 'tenders' | 'report'>('count');
   const [loading, setLoading] = useState(false);

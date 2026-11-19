@@ -20,8 +20,17 @@ import { useBarContext } from '@/hooks/useBarContext';
 import { getMvpDashboardData, type MvpDashboardData } from '@/services/dashboardService';
 import CloseDayModal from '@/components/modals/CloseDayModal';
 import { Button } from '@/components/ui/button';
+import AppShell from '@/components/layout/AppShell';
 
 export default function DashboardPage() {
+  return (
+    <AppShell>
+      <Dashboard />
+    </AppShell>
+  );
+}
+
+function Dashboard() {
   const router = useRouter();
   const { barContext, loading: authLoading, error: barError, user } = useBarContext();
   const activeBar = barContext
@@ -36,7 +45,7 @@ export default function DashboardPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
 
-  const businessDate = currentBusinessDate();
+  const businessDate = currentBusinessDate(barContext?.businessDayCutoff);
 
   useEffect(() => {
     if (!barId || !canViewTakings) return;
