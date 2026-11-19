@@ -1,5 +1,7 @@
 'use client';
 
+import {supabase} from '@/lib/supabaseClient';
+import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -18,6 +20,7 @@ import CloseDayModal from '@/components/modals/CloseDayModal';
 import { Button } from '@/components/ui/button';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { barContext, loading: authLoading } = useBarContext();
   const activeBar = barContext
     ? { id: barContext.barId, name: barContext.barName, role: barContext.role }
@@ -96,6 +99,18 @@ export default function DashboardPage() {
           >
             <Lock className="w-4 h-4 mr-1.5" />
             {data?.isTodayClosed ? 'Today Closed' : 'Close Day'}
+          </Button>
+
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-zinc-400 hover:text-zinc-100"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              router.push('/login');
+            }}
+          >
+            Sign Out
           </Button>
         </div>
       </div>
