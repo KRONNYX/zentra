@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search,
@@ -17,7 +17,6 @@ import {
   X,
 } from 'lucide-react';
 import { useBarContext } from '@/hooks/useBarContext';
-import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabaseClient';
 import {
   orderService,
@@ -26,6 +25,9 @@ import {
   isValidMpesaCode,
 } from '@/services/orderService';
 import { Button } from '@/components/ui/button';
+import AppShell from '@/components/layout/AppShell';
+import { currentBusinessDate } from '@/lib/businessDate';
+import { errorMessage } from '@/lib/utils';
 
 interface ProductItem {
   id: string;
@@ -36,9 +38,29 @@ interface ProductItem {
   current_stock: number;
 }
 
+async function fetchPosData(barId: string) {
+  const [{ data: prodData, error: prodErr }, tabs] = await Promise.all([
+    supabase
+      .from('products')
+      .select('id, name, category, unit, selling_price, current_stock')
+      .eq('bar_id', barId)
+      .eq('is_active', true)
+      .order('name'),
+    orderService.getOpenTabs(barId),
+  ]);
+  if (prodErr) throw prodErr;
+  return { products: (prodData || []) as ProductItem[], tabs };
+}
+
 export default function PosOrdersPage() {
-  // NEW
-  // At the top of OrdersPage():
+  return (
+    <AppShell>
+      <PosOrders />
+    </AppShell>
+  );
+}
+
+function PosOrders() {
   const { barContext, loading: authLoading, error: barError, user } = useBarContext();
   const activeBar = barContext
   ? { id: barContext.barId, name: barContext.barName }
@@ -69,40 +91,33 @@ export default function PosOrdersPage() {
   const [settleMethod, setSettleMethod] = useState<'cash' | 'mpesa'>('mpesa');
   const [settleCode, setSettleCode] = useState('');
 
-  const businessDate = new Date().toISOString().split('T')[0];
+  const businessDate = currentBusinessDate(barContext?.businessDayCutoff);
 
-  const loadData = async () => {
-    if (!activeBar?.id) return;
-    setLoading(true);
-    try {
-      const [{ data: prodData, error: prodErr }, tabsData] = await Promise.all([
-        supabase
-          .from('products')
-          .select('id, name, category, unit, selling_price, current_stock')
-          .eq('bar_id', activeBar.id)
-          .eq('is_active', true)
-          .order('name'),
-        orderService.getOpenTabs(activeBar.id),
-      ]);
+  const barId = activeBar?.id;
 
-      if (prodErr) throw prodErr;
-      setProducts((prodData || []) as ProductItem[]);
-      setOpenTabs(tabsData);
-    } catch (err: any) {
-      setFeedback({ type: 'error', text: err.message || 'Failed to load POS data.' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const applyPosData = useCallback(
+    (promise: Promise<{ products: ProductItem[]; tabs: OpenTabRecord[] }>) =>
+      promise
+        .then(({ products: nextProducts, tabs }) => {
+          setProducts(nextProducts);
+          setOpenTabs(tabs);
+        })
+        .catch((err: unknown) => {
+          setFeedback({ type: 'error', text: errorMessage(err, 'Failed to load POS data.') });
+        })
+        .finally(() => setLoading(false)),
+    []
+  );
+
+  const loadData = useCallback(async () => {
+    if (!barId) return;
+    await applyPosData(fetchPosData(barId));
+  }, [barId, applyPosData]);
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!activeBar?.id) {
-      setLoading(false);
-      return;
-    }
-    loadData();
-  }, [authLoading, activeBar?.id]);
+    if (authLoading || !barId) return;
+    applyPosData(fetchPosData(barId));
+  }, [authLoading, barId, applyPosData]);
 
   const categories = useMemo(() => {
     const cats = new Set(products.map((p) => p.category).filter(Boolean));
@@ -184,7 +199,6 @@ export default function PosOrdersPage() {
 
       await orderService.createOrder({
         barId: activeBar.id,
-        businessDate,
         items: cart,
         paymentMode,
         cashAmount: paymentMode === 'split' ? parsedCash : paymentMode === 'cash' ? cartTotal : 0,
@@ -204,8 +218,8 @@ export default function PosOrdersPage() {
             : `Order recorded — KES ${cartTotal.toLocaleString()}`,
       });
       await loadData();
-    } catch (err: any) {
-      setFeedback({ type: 'error', text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: 'error', text: errorMessage(err) });
     } finally {
       setSubmitting(false);
     }
@@ -213,7 +227,7 @@ export default function PosOrdersPage() {
 
   const handleSettleTab = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeBar?.id || !user?.id || !settlingTab) return;
+    if (!activeBar?.id || !settlingTab) return;
 
     setSubmitting(true);
     setFeedback(null);
@@ -221,11 +235,8 @@ export default function PosOrdersPage() {
       await orderService.settleTab({
         barId: activeBar.id,
         tabId: settlingTab.id,
-        amount: Number(settlingTab.amount),
         method: settleMethod,
         mpesaCode: settleCode,
-        businessDate,
-        userId: user.id,
       });
       setSettlingTab(null);
       setSettleCode('');
@@ -234,8 +245,8 @@ export default function PosOrdersPage() {
         text: `Settled ${settlingTab.customer_name}'s tab (KES ${Number(settlingTab.amount).toLocaleString()}).`,
       });
       await loadData();
-    } catch (err: any) {
-      setFeedback({ type: 'error', text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: 'error', text: errorMessage(err) });
     } finally {
       setSubmitting(false);
     }
@@ -350,7 +361,7 @@ export default function PosOrdersPage() {
       
       {/* MAIN CONTENT: DRINK GRID OR OPEN TABS */}
       <div className="p-4">
-        {authLoading || loading ? (
+        {authLoading || (activeBar && loading) ? (
         <div className="p-8 text-center text-zinc-400 text-sm">Loading counter...</div>
       ) : !user ? (
         <div className="p-8 text-center space-y-3">
@@ -451,7 +462,7 @@ export default function PosOrdersPage() {
 
       {/* STICKY BOTTOM CART BAR */}
       {activeView === 'pos' && cart.length > 0 && !isCheckoutOpen && (
-        <div className="fixed bottom-16 md:bottom-4 inset-x-4 z-30">
+        <div className="fixed bottom-24 lg:bottom-4 inset-x-4 lg:left-[296px] z-30">
           <motion.button
             type="button"
             initial={{ y: 20, opacity: 0 }}
@@ -544,19 +555,21 @@ export default function PosOrdersPage() {
               {/* Payment Method Selector */}
               <form onSubmit={handleCheckoutSubmit} className="space-y-4">
                 <div className="grid grid-cols-4 gap-2">
-                  {[
-                    { id: 'mpesa', label: 'M-PESA', icon: Smartphone },
-                    { id: 'cash', label: 'Cash', icon: Banknote },
-                    { id: 'split', label: 'Split', icon: Receipt },
-                    { id: 'tab', label: 'Open Tab', icon: UserPlus },
-                  ].map((mode) => {
+                  {(
+                    [
+                      { id: 'mpesa', label: 'M-PESA', icon: Smartphone },
+                      { id: 'cash', label: 'Cash', icon: Banknote },
+                      { id: 'split', label: 'Split', icon: Receipt },
+                      { id: 'tab', label: 'Open Tab', icon: UserPlus },
+                    ] as const
+                  ).map((mode) => {
                     const Icon = mode.icon;
                     const active = paymentMode === mode.id;
                     return (
                       <button
                         key={mode.id}
                         type="button"
-                        onClick={() => setPaymentMode(mode.id as any)}
+                        onClick={() => setPaymentMode(mode.id)}
                         className={`py-2.5 px-2 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition ${
                           active
                             ? 'bg-emerald-500/15 border-emerald-500 text-emerald-300'

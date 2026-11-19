@@ -86,6 +86,10 @@ export function hasPermission(
 }
 
 export function canViewRoute(role: string | null | undefined, route: string) {
+  if (route.startsWith("/orders")) {
+    return true;
+  }
+
   if (route.startsWith("/dashboard")) {
     return hasPermission(role, "view_home");
   }

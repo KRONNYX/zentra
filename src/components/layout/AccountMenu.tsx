@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { LogOut, Settings, UserCircle2 } from "lucide-react";
+import { LogOut, UserCircle2 } from "lucide-react";
 
 export default function AccountMenu({
   email,
@@ -79,15 +78,6 @@ export default function AccountMenu({
           </div>
 
           <div className="p-2">
-            <Link
-              href="/settings"
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <Settings size={18} />
-              Settings
-            </Link>
             <button
               type="button"
               role="menuitem"

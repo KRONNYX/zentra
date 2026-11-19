@@ -17,6 +17,8 @@ import { useBarContext } from '@/hooks/useBarContext';
 import { dailyClosureService } from '@/services/dailyClosureService';
 import { BlindProductCountRow, DailyClosureReport } from '@/types/dailyClosure';
 import { Button } from '@/components/ui/button';
+import { currentBusinessDate } from '@/lib/businessDate';
+import { errorMessage } from '@/lib/utils';
 
 interface CloseDayModalProps {
   isOpen: boolean;
@@ -31,12 +33,11 @@ export function CloseDayModal({
   businessDate: propDate,
   onDayClosed,
 }: CloseDayModalProps) {
-  // NEW
   const { barContext } = useBarContext();
   const activeBar = barContext
   ? { id: barContext.barId, name: barContext.barName }
   : null;
-  const businessDate = propDate || new Date().toISOString().split('T')[0];
+  const businessDate = propDate || currentBusinessDate(barContext?.businessDayCutoff);
 
   const [step, setStep] = useState<'count' | 'tenders' | 'report'>('count');
   const [loading, setLoading] = useState(false);
@@ -75,8 +76,8 @@ export function CloseDayModal({
         ]);
         setRows(sheet);
         setOpeningCash(String(suggestedFloat));
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(errorMessage(err));
       } finally {
         setLoading(false);
       }
@@ -147,8 +148,8 @@ export function CloseDayModal({
       setReport(closedReport);
       setStep('report');
       onDayClosed?.(closedReport);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }

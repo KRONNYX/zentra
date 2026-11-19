@@ -10,7 +10,6 @@ export interface PosCartItem {
 
 export interface SubmitOrderPayload {
   barId: string;
-  businessDate: string; // YYYY-MM-DD
   items: PosCartItem[];
   paymentMode: 'cash' | 'mpesa' | 'split' | 'tab';
   cashAmount?: number;
@@ -56,6 +55,9 @@ function mapPosError(error: { code?: string; message?: string }): Error {
   if (msg.includes('ERR_PERIOD_LOCKED')) {
     return new Error('Business Day Closed: Sales cannot be recorded for a closed date.');
   }
+  if (msg.includes('Unauthorized')) {
+    return new Error('You are not an active member of this bar.');
+  }
   if (msg.includes('Payment mismatch')) {
     return new Error('Payment amounts do not match the order total.');
   }
@@ -64,7 +66,8 @@ function mapPosError(error: { code?: string; message?: string }): Error {
 
 export const orderService = {
   /**
-   * Executes the atomic `record_pos_sale` PostgreSQL RPC.
+   * Executes the atomic `record_pos_sale` PostgreSQL RPC. The database prices
+   * each drink from `products` and stamps the current business date.
    */
   async createOrder(payload: SubmitOrderPayload): Promise<string> {
     const total = payload.items.reduce(
@@ -110,12 +113,10 @@ export const orderService = {
     const rpcItems = payload.items.map((item) => ({
       product_id: item.product_id,
       quantity: item.quantity,
-      unit_price: item.unit_price,
     }));
 
     const { data, error } = await supabase.rpc('record_pos_sale', {
       p_bar_id: payload.barId,
-      p_business_date: payload.businessDate,
       p_items: rpcItems,
       p_cash_amount: cashAmount,
       p_mpesa_amount: mpesaAmount,
@@ -149,16 +150,14 @@ export const orderService = {
   },
 
   /**
-   * Settles an open customer tab via Cash or M-PESA.
+   * Settles an open customer tab via Cash or M-PESA in one database transaction.
+   * The amount is taken from the tab itself.
    */
   async settleTab(params: {
     barId: string;
     tabId: string;
-    amount: number;
     method: 'cash' | 'mpesa';
     mpesaCode?: string;
-    businessDate: string;
-    userId: string;
   }): Promise<void> {
     let cleanCode: string | null = null;
 
@@ -167,47 +166,15 @@ export const orderService = {
       if (!isValidMpesaCode(cleanCode)) {
         throw new Error('Enter a valid 10-character M-PESA confirmation code.');
       }
-
-      const { error: mpesaErr } = await supabase.from('mpesa_transactions').insert({
-        bar_id: params.barId,
-        staff_id: params.userId,
-        phone_number: 'TAB_SETTLEMENT',
-        amount: params.amount,
-        transaction_type: 'tab_settlement',
-        transaction_code: cleanCode,
-        status: 'matched',
-      });
-
-      if (mpesaErr) throw mapPosError(mpesaErr);
     }
 
-    // Record settlement sale entry so daily cash/mpesa reconciliation stays balanced
-    const { error: saleErr } = await supabase.from('sales').insert({
-      bar_id: params.barId,
-      staff_id: params.userId,
-      sale_date: params.businessDate,
-      sold_at: new Date().toISOString(),
-      total_amount: params.amount,
-      cash_amount: params.method === 'cash' ? params.amount : 0,
-      mpesa_amount: params.method === 'mpesa' ? params.amount : 0,
-      status: 'paid',
-      notes: `Tab Settlement (${params.tabId})`,
+    const { error } = await supabase.rpc('settle_customer_tab', {
+      p_bar_id: params.barId,
+      p_tab_id: params.tabId,
+      p_method: params.method,
+      p_mpesa_code: cleanCode,
     });
 
-    if (saleErr) throw mapPosError(saleErr);
-
-    const { error: tabErr } = await supabase
-      .from('customer_credits')
-      .update({
-        status: 'settled',
-        settled_date: params.businessDate,
-        settled_business_date: params.businessDate,
-        settled_at: new Date().toISOString(),
-        settled_by: params.userId,
-      })
-      .eq('id', params.tabId)
-      .eq('bar_id', params.barId);
-
-    if (tabErr) throw new Error(tabErr.message);
+    if (error) throw mapPosError(error);
   },
 };

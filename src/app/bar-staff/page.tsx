@@ -35,6 +35,7 @@ import {
   updateStaffMember,
 } from "@/services/barStaffService";
 import { getBarContextForUser } from "@/services/dashboardService";
+import { DEFAULT_BUSINESS_DAY_CUTOFF } from "@/lib/businessDate";
 import {
   inviteBarUser,
   listBarMemberships,
@@ -61,6 +62,7 @@ const emptyBarProfile: BarProfile = {
   phone: "",
   email: "",
   imageUrl: "",
+  businessDayCutoff: DEFAULT_BUSINESS_DAY_CUTOFF,
 };
 
 const emptyShift: ShiftForm = {
@@ -567,6 +569,24 @@ export default function BarStaffPage() {
                   className={canManageStaff ? "input" : "input bg-slate-50"}
                   placeholder="https://..."
                 />
+              </Field>
+              <Field label="Business day ends at">
+                <input
+                  type="time"
+                  max="12:00"
+                  value={barProfile.businessDayCutoff}
+                  readOnly={!canManageStaff}
+                  onChange={(event) =>
+                    setBarProfile((current) => ({
+                      ...current,
+                      businessDayCutoff: event.target.value,
+                    }))
+                  }
+                  className={canManageStaff ? "input" : "input bg-slate-50"}
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Sales before this time count towards the previous night&apos;s shift.
+                </span>
               </Field>
               <div className="sm:col-span-2">
                 <Field label="Address">

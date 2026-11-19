@@ -7,6 +7,7 @@ import { isSuperUser, normalizeRole } from "@/lib/permissions";
 export type BarContext = {
   barId: string;
   barName: string;
+  businessDayCutoff: string | null;
   role: string;
   source: "super_user" | "bar_memberships";
 };
@@ -24,6 +25,7 @@ type AppUserRow = {
 type BarRow = {
   id?: string;
   name: string | null;
+  business_day_cutoff?: string | null;
 };
 
 export interface MvpDashboardData {
@@ -48,15 +50,18 @@ export interface MvpDashboardData {
   } | null;
 }
 
-async function getBarName(barId: string) {
+async function getBar(barId: string) {
   const { data } = await supabase
     .from("bars")
-    .select("name")
+    .select("name, business_day_cutoff")
     .eq("id", barId)
     .limit(1)
     .maybeSingle<BarRow>();
 
-  return data?.name ?? "Your bar";
+  return {
+    name: data?.name ?? "Your bar",
+    businessDayCutoff: data?.business_day_cutoff ?? null,
+  };
 }
 
 async function getGlobalRole(userId: string, email?: string) {
@@ -90,14 +95,15 @@ async function getGlobalRole(userId: string, email?: string) {
 export async function listAllBarsForSuperUser() {
   const { data, error } = await supabase
     .from("bars")
-    .select("id, name")
+    .select("id, name, business_day_cutoff")
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string | null }>>();
+    .returns<Array<Required<BarRow>>>();
 
   return {
     bars: (data ?? []).map((bar) => ({
       id: bar.id,
       name: bar.name ?? "Unnamed bar",
+      businessDayCutoff: bar.business_day_cutoff ?? null,
     })),
     error: error?.message ?? "",
   };
@@ -123,6 +129,7 @@ export async function getBarContextForUser(
         barContext: {
           barId: activeBar.id,
           barName: activeBar.name,
+          businessDayCutoff: activeBar.businessDayCutoff,
           role: "super_user",
           source: "super_user" as const,
         },
@@ -145,10 +152,13 @@ export async function getBarContextForUser(
     .maybeSingle<MembershipRow>();
 
   if (membership?.bar_id) {
+    const bar = await getBar(membership.bar_id);
+
     return {
       barContext: {
         barId: membership.bar_id,
-        barName: await getBarName(membership.bar_id),
+        barName: bar.name,
+        businessDayCutoff: bar.businessDayCutoff,
         role: normalizeRole(membership.role),
         source: "bar_memberships" as const,
       },

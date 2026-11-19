@@ -37,6 +37,8 @@ type ProductRow = {
   purchase_price: number | string | null;
   selling_price: number | string | null;
   minimum_stock_level: number | string | null;
+  opening_stock?: number | string | null;
+  current_stock?: number | string | null;
   is_active: boolean | null;
   barcode: string | null;
   brand: string | null;
@@ -125,7 +127,7 @@ export async function getProducts(barId: string) {
     supabase
       .from("products")
       .select(
-        "id, name, category, unit, purchase_price, selling_price, minimum_stock_level, is_active, barcode, brand",
+        "id, name, category, unit, purchase_price, selling_price, minimum_stock_level, is_active, barcode, brand, opening_stock, current_stock",
       )
       .eq("bar_id", barId)
       .order("name", { ascending: true })
@@ -161,8 +163,11 @@ export async function getProducts(barId: string) {
       const inventory =
         inventoryByProduct.get(product.id) ??
         inventoryByName.get(normalizeName(product.name));
+      // products.current_stock is what the POS and Close Day use.
       const currentStock =
-        toNumber(inventory?.current_stock) || toNumber(inventory?.quantity);
+        product.current_stock !== null && product.current_stock !== undefined
+          ? toNumber(product.current_stock)
+          : toNumber(inventory?.current_stock) || toNumber(inventory?.quantity);
       const purchasePrice = toNumber(product.purchase_price);
       const sellingPrice = toNumber(product.selling_price);
 
@@ -228,6 +233,8 @@ export async function createProduct(
       is_active: product.isActive,
       barcode: product.barcode || null,
       brand: product.brand || null,
+      opening_stock: product.openingStock,
+      current_stock: product.currentStock,
     })
     .select("id")
     .single<{ id: string }>();
@@ -301,6 +308,21 @@ export async function updateProduct(
 
   if (productError) {
     return { error: productError.message };
+  }
+
+  const { error: stockError } = await supabase.rpc("set_product_stock", {
+    p_bar_id: barId,
+    p_product_id: productId,
+    p_new_stock: product.currentStock,
+    p_notes: "Product editor",
+  });
+
+  if (stockError) {
+    return {
+      error: stockError.message.includes("ERR_PERIOD_LOCKED")
+        ? "Today's business day is closed. Stock changes will be possible after the next business day starts."
+        : stockError.message,
+    };
   }
 
   const inventoryPayload = {
